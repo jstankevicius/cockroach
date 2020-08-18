@@ -215,8 +215,9 @@ func (b *bank) Ops(
 			amount := rand.Intn(maxTransfer)
 			start := timeutil.Now()
 			_, err := updateStmt.Exec(from, to, amount)
-			elapsed := timeutil.Since(start)
-			hists.Get(`transfer`).Record(elapsed)
+			//elapsed := timeutil.Since(start)
+			finish := timeutil.Now()
+			hists.Get(`transfer`).Record(start, finish)
 			return err
 		}
 		ql.WorkerFns = append(ql.WorkerFns, workerFn)

@@ -191,8 +191,9 @@ func (w *worker) run(ctx context.Context) error {
 		return errors.Wrapf(err, "error in %s", txInfo.name)
 	}
 	if ctx.Err() == nil {
-		elapsed := timeutil.Since(start)
-		w.hists.Get(txInfo.name).Record(elapsed)
+		//elapsed := timeutil.Since(start)
+		finish := timeutil.Now()
+		w.hists.Get(txInfo.name).Record(start, finish)
 	}
 
 	// 5.2.5.4: Think time is taken independently from a negative exponential

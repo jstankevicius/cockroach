@@ -563,8 +563,9 @@ func (yw *ycsbWorker) run(ctx context.Context) error {
 		return err
 	}
 
-	elapsed := timeutil.Since(start)
-	yw.hists.Get(string(op)).Record(elapsed)
+	//elapsed := timeutil.Since(start)
+	finish := timeutil.Now()
+	yw.hists.Get(string(op)).Record(start, finish)
 	return nil
 }
 

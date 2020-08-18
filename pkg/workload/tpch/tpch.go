@@ -467,8 +467,9 @@ func (w *worker) run(ctx context.Context) error {
 		}
 	}
 	elapsed := timeutil.Since(start)
+	finish := timeutil.Now()
 	if w.config.verbose {
-		w.hists.Get(fmt.Sprintf("%d", queryNum)).Record(elapsed)
+		w.hists.Get(fmt.Sprintf("%d", queryNum)).Record(start, finish)
 		// Note: if you are changing the output format here, please change the
 		// regex in roachtest/tpchvec.go accordingly.
 		log.Infof(ctx, "[q%d] returned %d rows after %4.2f seconds:\n%s",

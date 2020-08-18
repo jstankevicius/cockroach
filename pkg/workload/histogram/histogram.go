@@ -16,6 +16,7 @@ import (
 	"io"
 	"os"
 	"sort"
+	"strconv"
 	"sync"
 	"time"
 
@@ -32,8 +33,9 @@ const (
 // NamedHistogram is a named histogram for use in Operations. It is threadsafe
 // but intended to be thread-local.
 type NamedHistogram struct {
-	name string
-	mu   struct {
+	name     string
+	requests []RequestData
+	mu       struct {
 		syncutil.Mutex
 		current *hdrhistogram.Histogram
 	}
@@ -42,12 +44,20 @@ type NamedHistogram struct {
 func newNamedHistogram(reg *Registry, name string) *NamedHistogram {
 	w := &NamedHistogram{name: name}
 	w.mu.current = reg.newHistogram()
+	w.requests = make([]RequestData, 0)
 	return w
 }
 
+// RequestData is used to store the start and end timestamps of each request.
+type RequestData struct {
+	start time.Time
+	end   time.Time
+}
+
 // Record saves a new datapoint and should be called once per logical operation.
-func (w *NamedHistogram) Record(elapsed time.Duration) {
+func (w *NamedHistogram) Record(start time.Time, finish time.Time) {
 	maxLatency := time.Duration(w.mu.current.HighestTrackableValue())
+	elapsed := finish.Sub(start)
 	if elapsed < minLatency {
 		elapsed = minLatency
 	} else if elapsed > maxLatency {
@@ -56,6 +66,7 @@ func (w *NamedHistogram) Record(elapsed time.Duration) {
 
 	w.mu.Lock()
 	err := w.mu.current.RecordValue(elapsed.Nanoseconds())
+	w.requests = append(w.requests, RequestData{start, finish})
 	w.mu.Unlock()
 
 	if err != nil {
@@ -131,6 +142,9 @@ func (w *Registry) Tick(fn func(Tick)) {
 	var names []string
 	var wg sync.WaitGroup
 
+	// List where we store request data from all histograms
+	var aggregateRequests = make([]RequestData, 0)
+
 	w.mu.Lock()
 	for name, nameRegistered := range w.mu.registered {
 		wg.Add(1)
@@ -139,6 +153,10 @@ func (w *Registry) Tick(fn func(Tick)) {
 		names = append(names, name)
 		go func(registered []*NamedHistogram, merged *hdrhistogram.Histogram) {
 			for _, hist := range registered {
+
+				// Add request data from this histogram to the total:
+				aggregateRequests = append(aggregateRequests, hist.requests...)
+
 				hist.tick(w.newHistogram(), func(h *hdrhistogram.Histogram) {
 					merged.Merge(h)
 					h.Reset()
@@ -175,6 +193,22 @@ func (w *Registry) Tick(fn func(Tick)) {
 		})
 		mergedHist.Reset()
 		w.histogramPool.Put(mergedHist)
+	}
+
+	// Dump request data into file:
+	f, err := os.OpenFile("requests.txt", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		fmt.Println("histogram.go: Encountered error while opening request file:")
+		panic(err)
+	}
+
+	// TODO: Deal with duplicates. A reasonably simple solution would be to hash the
+	// timestamps (start, end, or both) and throw it into a hashtable. If a collision
+	// occurs, we know we've written this data already. For now I'm not bothering.
+	for _, req := range aggregateRequests {
+		startNano := strconv.FormatInt(req.start.UnixNano(), 10)
+		endNano := strconv.FormatInt(req.end.UnixNano(), 10)
+		fmt.Fprintf(f, "%s\t%s\n", startNano, endNano)
 	}
 }
 

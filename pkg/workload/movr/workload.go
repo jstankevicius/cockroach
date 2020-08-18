@@ -254,9 +254,10 @@ func (m *movrWorker) generateWorkSimulation() func(context.Context) error {
 	runAndRecord := func(key string, work func() error) error {
 		start := timeutil.Now()
 		err := work()
-		elapsed := timeutil.Since(start)
+		//elapsed := timeutil.Since(start)
+		finish := timeutil.Now()
 		if err == nil {
-			m.hists.Get(key).Record(elapsed)
+			m.hists.Get(key).Record(start, finish)
 		}
 		return err
 	}

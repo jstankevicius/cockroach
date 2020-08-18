@@ -212,8 +212,9 @@ func (w *bulkingest) Ops(
 
 			start := timeutil.Now()
 			res, err := updateStmt.Exec(a, b, c, pad)
-			elapsed := timeutil.Since(start)
-			hists.Get(`update-payload`).Record(elapsed)
+			//elapsed := timeutil.Since(start)
+			finish := timeutil.Now()
+			hists.Get(`update-payload`).Record(start, finish)
 			if err != nil {
 				return err
 			}
