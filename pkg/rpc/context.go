@@ -24,6 +24,7 @@ import (
 	"time"
 
 	circuit "github.com/cockroachdb/circuitbreaker"
+	"github.com/cockroachdb/cockroach/pkg/admission"
 	"github.com/cockroachdb/cockroach/pkg/base"
 	"github.com/cockroachdb/cockroach/pkg/roachpb"
 	"github.com/cockroachdb/cockroach/pkg/security"
@@ -190,6 +191,9 @@ func NewServer(ctx *Context, opts ...ServerOption) *grpc.Server {
 		unaryInterceptor = append(unaryInterceptor, tracing.ServerInterceptor(tracer))
 		streamInterceptor = append(streamInterceptor, tracing.StreamServerInterceptor(tracer))
 	}
+
+	c := admission.NewController()
+	unaryInterceptor = append(unaryInterceptor, admission.Interceptor(c))
 
 	grpcOpts = append(grpcOpts, grpc.ChainUnaryInterceptor(unaryInterceptor...))
 	grpcOpts = append(grpcOpts, grpc.ChainStreamInterceptor(streamInterceptor...))
