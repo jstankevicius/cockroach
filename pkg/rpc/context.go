@@ -24,7 +24,6 @@ import (
 	"time"
 
 	circuit "github.com/cockroachdb/circuitbreaker"
-	"github.com/cockroachdb/cockroach/pkg/admission"
 	"github.com/cockroachdb/cockroach/pkg/base"
 	"github.com/cockroachdb/cockroach/pkg/roachpb"
 	"github.com/cockroachdb/cockroach/pkg/security"
@@ -192,8 +191,7 @@ func NewServer(ctx *Context, opts ...ServerOption) *grpc.Server {
 		streamInterceptor = append(streamInterceptor, tracing.StreamServerInterceptor(tracer))
 	}
 
-	c := admission.NewController()
-	unaryInterceptor = append(unaryInterceptor, admission.Interceptor(c))
+	unaryInterceptor = append(unaryInterceptor, ctx.admissionInterceptor)
 
 	grpcOpts = append(grpcOpts, grpc.ChainUnaryInterceptor(unaryInterceptor...))
 	grpcOpts = append(grpcOpts, grpc.ChainStreamInterceptor(streamInterceptor...))
@@ -308,12 +306,24 @@ type Context struct {
 
 	metrics Metrics
 
+	// This seems like a terrible decision.
+	// TODO(jstankevicius): Stick this literally anywhere else.
+	// I couldn't figure out how to pass the interceptor down to rpc.NewServer
+	// while keeping the admission controller accessible from server.go, so the
+	// interceptor gets stuck to the rpc.Context and used inside NewServer().
+	admissionInterceptor grpc.UnaryServerInterceptor
+
 	// For unittesting.
 	BreakerFactory  func() *circuit.Breaker
 	testingDialOpts []grpc.DialOption
 
 	// For testing. See the comment on the same field in HeartbeatService.
 	TestingAllowNamedRPCToAnonymousServer bool
+}
+
+// SetAdmissionInterceptor sets the rpc.Context's admissionInterceptor.
+func (ctx *Context) SetAdmissionInterceptor(i grpc.UnaryServerInterceptor) {
+	ctx.admissionInterceptor = i
 }
 
 // connKey is used as key in the Context.conns map.

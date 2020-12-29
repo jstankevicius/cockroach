@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync/atomic"
 
+	"github.com/cockroachdb/cockroach/pkg/admission"
 	"github.com/cockroachdb/cockroach/pkg/rpc"
 	"github.com/cockroachdb/errors"
 	"google.golang.org/grpc"
@@ -25,6 +26,7 @@ import (
 // and a mode of operation that can instruct the interceptor to refuse certain
 // RPCs.
 type grpcServer struct {
+	admissionController *admission.Controller
 	*grpc.Server
 	mode serveMode
 }
@@ -32,6 +34,12 @@ type grpcServer struct {
 func newGRPCServer(rpcCtx *rpc.Context) *grpcServer {
 	s := &grpcServer{}
 	s.mode.set(modeInitializing)
+
+	// Admission control:
+	config := admission.DefaultConfig()
+	s.admissionController = admission.NewController(config)
+	rpcCtx.SetAdmissionInterceptor(admission.Interceptor(s.admissionController))
+
 	s.Server = rpc.NewServer(rpcCtx, rpc.WithInterceptor(func(path string) error {
 		return s.intercept(path)
 	}))

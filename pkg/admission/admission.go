@@ -2,29 +2,44 @@ package admission
 
 import (
 	"context"
-	"fmt"
-	"math"
+	"strconv"
 	"time"
 
-	"github.com/cockroachdb/cockroach/pkg/util/log"
 	"github.com/cockroachdb/cockroach/pkg/util/quotapool"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/metadata"
 )
 
-// Controller is a struct that determines the
-// current admission parameters.
-type Controller struct {
-	pool *quotapool.IntPool
-
-	// more data members?
+// Config configures a Controller.
+type Config struct {
+	Limit uint64
 }
 
-// NewController constructs a new Controller struct.
-func NewController() *Controller {
+// Default config settings:
+const (
+	defaultConcurrency = 50
+)
+
+// DefaultConfig returns a Config with preset values.
+func DefaultConfig() Config {
+	c := Config{
+		Limit: defaultConcurrency,
+	}
+
+	return c
+}
+
+// Controller determines the current admission parameters.
+type Controller struct {
+	pool *quotapool.IntPool
+}
+
+// NewController constructs a new Controller struct from a given Config.
+func NewController(conf Config) *Controller {
 	c := Controller{
 
-		// Right now this just has infinite capacity.
-		pool: quotapool.NewIntPool("controller intpool", math.MaxInt64),
+		// Should this have a better name?
+		pool: quotapool.NewIntPool("controller intpool", conf.Limit),
 	}
 
 	return &c
@@ -33,27 +48,33 @@ func NewController() *Controller {
 // Interceptor returns a UnaryServerInterceptor with parameters
 // taken from a Controller.
 func Interceptor(c *Controller) grpc.UnaryServerInterceptor {
-	// Right now we don't actually do anything with the
-	// Controller, but we'll do stuff later.
 
 	admissionInterceptor := func(ctx context.Context,
 		req interface{},
 		info *grpc.UnaryServerInfo,
 		handler grpc.UnaryHandler) (interface{}, error) {
 
-		// Take request timestamp
-		start := time.Now().UnixNano()
+		if info.FullMethod == "/cockroach.roachpb.Internal/Batch" {
 
-		// Call handler
-		h, err := handler(ctx, req)
+			// Attempt to acquire a single unit from the IntPool.
+			// We're not going to handle the error for now.
+			alloc, _ := c.pool.Acquire(ctx, 1)
+			defer c.pool.Release(alloc)
 
-		// Log request reception (and print to console for good
-		// measure)
-		log.Infof(ctx, "request received at %d\n", start)
-		fmt.Printf("admission interceptor: request received at %d\n", start)
-		fmt.Printf("info: %s\n", info.FullMethod)
+			// Take request timestamp, add it to context's metadata, and return
+			// this new context.
+			start := time.Now().UnixNano()
+			ctx = metadata.AppendToOutgoingContext(ctx, "start-time", strconv.Itoa(int(start)))
 
-		return h, err
+			// outMd, _ := metadata.FromOutgoingContext(ctx)
+			// log.Infof(ctx, "%s\n", outMd.Get("start-time"))
+			// fmt.Printf("%s\n", outMd.Get("start-time"))
+
+			return handler(ctx, req)
+		}
+
+		// Otherwise just handle normally
+		return handler(ctx, req)
 	}
 
 	return admissionInterceptor
