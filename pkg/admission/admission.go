@@ -60,14 +60,14 @@ func NewController(conf Config) *Controller {
 
 // NumWaiting returns the current number of requests that have been intercepted
 // by admission.Interceptor but have not been acquired.
-func NumWaiting(c *Controller) int64 {
+func (c *Controller) NumWaiting() int64 {
 	return atomic.LoadInt64(&c.mu.numWaiting)
 }
 
 // NumAcquired returns the number of requests we have acquired quota for.
 // This is functionally identical to computing
 // c.pool.Capacity() - c.pool.ApproximateQuota().
-func NumAcquired(c *Controller) int64 {
+func (c *Controller) NumAcquired() int64 {
 	return atomic.LoadInt64(&c.mu.numAcquired)
 }
 
