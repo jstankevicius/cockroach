@@ -16,6 +16,7 @@ import (
 	"io"
 	"os"
 	"sort"
+	"strconv"
 	"sync"
 	"time"
 
@@ -29,6 +30,12 @@ const (
 	minLatency = 100 * time.Microsecond
 )
 
+// RequestTimestamp is used to store the start and end timestamps of a request.
+type RequestTimestamp struct {
+	start time.Time
+	end   time.Time
+}
+
 // NamedHistogram is a named histogram for use in Operations. It is threadsafe
 // but intended to be thread-local.
 type NamedHistogram struct {
@@ -36,12 +43,14 @@ type NamedHistogram struct {
 	mu   struct {
 		syncutil.Mutex
 		current *hdrhistogram.Histogram
+		ts      []RequestTimestamp
 	}
 }
 
 func newNamedHistogram(reg *Registry, name string) *NamedHistogram {
 	w := &NamedHistogram{name: name}
 	w.mu.current = reg.newHistogram()
+	w.mu.ts = make([]RequestTimestamp, 0)
 	return w
 }
 
@@ -66,6 +75,19 @@ func (w *NamedHistogram) Record(elapsed time.Duration) {
 	}
 }
 
+// RecordInterval computes the delta between two request timestamps and calls
+// Record() on the difference.
+func (w *NamedHistogram) RecordInterval(start time.Time, finish time.Time) {
+	elapsed := finish.Sub(start)
+	w.mu.Lock()
+	w.mu.ts = append(w.mu.ts, RequestTimestamp{start, finish})
+	w.mu.Unlock()
+
+	// We're going to be locking/unlocking the mutex twice, but this avoids
+	// copy-pasting code. It's probably okay.
+	w.Record(elapsed)
+}
+
 // tick resets the current histogram to a new "period". The old one's data
 // should be saved via the closure argument.
 func (w *NamedHistogram) tick(
@@ -74,6 +96,7 @@ func (w *NamedHistogram) tick(
 	w.mu.Lock()
 	h := w.mu.current
 	w.mu.current = newHistogram
+	w.mu.ts = make([]RequestTimestamp, 0)
 	w.mu.Unlock()
 	fn(h)
 }
@@ -131,6 +154,8 @@ func (w *Registry) Tick(fn func(Tick)) {
 	var names []string
 	var wg sync.WaitGroup
 
+	aggregateRequests := make([]RequestTimestamp, 0)
+
 	w.mu.Lock()
 	for name, nameRegistered := range w.mu.registered {
 		wg.Add(1)
@@ -139,6 +164,7 @@ func (w *Registry) Tick(fn func(Tick)) {
 		names = append(names, name)
 		go func(registered []*NamedHistogram, merged *hdrhistogram.Histogram) {
 			for _, hist := range registered {
+				aggregateRequests = append(aggregateRequests, hist.mu.ts...)
 				hist.tick(w.newHistogram(), func(h *hdrhistogram.Histogram) {
 					merged.Merge(h)
 					h.Reset()
@@ -175,6 +201,17 @@ func (w *Registry) Tick(fn func(Tick)) {
 		})
 		mergedHist.Reset()
 		w.histogramPool.Put(mergedHist)
+	}
+
+	f, err := os.OpenFile("requests.txt", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		fmt.Println("Could not open request file")
+	}
+
+	for _, req := range aggregateRequests {
+		startNano := strconv.FormatInt(req.start.UnixNano(), 10)
+		endNano := strconv.FormatInt(req.end.UnixNano(), 10)
+		fmt.Fprintf(f, "%s\t%s\n", startNano, endNano)
 	}
 }
 

@@ -362,8 +362,8 @@ func (o *kvOp) run(ctx context.Context) error {
 		if empty {
 			atomic.AddInt64(o.numEmptyResults, 1)
 		}
-		elapsed := timeutil.Since(start)
-		o.hists.Get(`read`).Record(elapsed)
+		end := timeutil.Now()
+		o.hists.Get(`read`).RecordInterval(start, end)
 		return rows.Err()
 	}
 	// Since we know the statement is not a read, we recalibrate
@@ -372,8 +372,8 @@ func (o *kvOp) run(ctx context.Context) error {
 	if statementProbability < o.config.spanPercent {
 		start := timeutil.Now()
 		_, err := o.spanStmt.Exec(ctx)
-		elapsed := timeutil.Since(start)
-		o.hists.Get(`span`).Record(elapsed)
+		end := timeutil.Now()
+		o.hists.Get(`span`).RecordInterval(start, end)
 		return err
 	}
 	const argCount = 2
@@ -385,8 +385,8 @@ func (o *kvOp) run(ctx context.Context) error {
 	}
 	start := timeutil.Now()
 	_, err := o.writeStmt.Exec(ctx, args...)
-	elapsed := timeutil.Since(start)
-	o.hists.Get(`write`).Record(elapsed)
+	end := timeutil.Now()
+	o.hists.Get(`write`).RecordInterval(start, end)
 	return err
 }
 
