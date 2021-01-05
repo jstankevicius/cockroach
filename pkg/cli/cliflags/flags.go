@@ -137,6 +137,12 @@ control is not returned to the shell until the server is ready to
 accept requests.`,
 	}
 
+	AdmissionConcurrency = FlagInfo{
+		Name: "admission-concurrency",
+		Description: `
+Defines the capacity of the IntPool used in admission.Controller.`,
+	}
+
 	SQLMem = FlagInfo{
 		Name: "max-sql-memory",
 		Description: `

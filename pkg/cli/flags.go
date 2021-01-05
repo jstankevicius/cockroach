@@ -54,6 +54,7 @@ var serverSQLAdvertiseAddr, serverSQLAdvertisePort string
 var serverHTTPAddr, serverHTTPPort string
 var localityAdvertiseHosts localityList
 var startBackground bool
+var admissionConcurrency int
 
 // initPreFlagsDefaults initializes the values of the global variables
 // defined above.
@@ -76,6 +77,7 @@ func initPreFlagsDefaults() {
 	localityAdvertiseHosts = localityList{}
 
 	startBackground = false
+	admissionConcurrency = 8
 }
 
 // AddPersistentPreRunE add 'fn' as a persistent pre-run function to 'cmd'.
@@ -343,6 +345,7 @@ func init() {
 		varFlag(f, addrSetter{&serverSQLAddr, &serverSQLPort}, cliflags.ListenSQLAddr)
 		varFlag(f, addrSetter{&serverSQLAdvertiseAddr, &serverSQLAdvertisePort}, cliflags.SQLAdvertiseAddr)
 		varFlag(f, addrSetter{&serverHTTPAddr, &serverHTTPPort}, cliflags.ListenHTTPAddr)
+		intFlag(f, &admissionConcurrency, cliflags.AdmissionConcurrency)
 		stringFlag(f, &serverSocketDir, cliflags.SocketDir)
 		boolFlag(f, &startCtx.unencryptedLocalhostHTTP, cliflags.UnencryptedLocalhostHTTP)
 
@@ -933,6 +936,10 @@ func extraServerFlagInit(cmd *cobra.Command) error {
 	serverCfg.Addr = net.JoinHostPort(startCtx.serverListenAddr, serverListenPort)
 
 	fs := flagSetForCmd(cmd)
+
+	// This should probably be added to its own context like above
+	concurrency, _ := fs.GetInt("admission-concurrency")
+	serverCfg.AdmissionConcurrency = concurrency
 
 	// Helper for .Changed that is nil-aware as not all of the `cmd`s may have
 	// all of the flags.

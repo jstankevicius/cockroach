@@ -35,9 +35,18 @@ func newGRPCServer(rpcCtx *rpc.Context) *grpcServer {
 	s := &grpcServer{}
 	s.mode.set(modeInitializing)
 
+	s.Server = rpc.NewServer(rpcCtx, rpc.WithInterceptor(func(path string) error {
+		return s.intercept(path)
+	}))
+	return s
+}
+
+func newGRPCServerWithConfig(rpcCtx *rpc.Context, cfg admission.Config) *grpcServer {
+	s := &grpcServer{}
+	s.mode.set(modeInitializing)
+
 	// Admission control:
-	config := admission.DefaultConfig()
-	s.admissionController = admission.NewController(config)
+	s.admissionController = admission.NewController(cfg)
 	rpcCtx.SetAdmissionInterceptor(admission.Interceptor(s.admissionController))
 
 	s.Server = rpc.NewServer(rpcCtx, rpc.WithInterceptor(func(path string) error {
