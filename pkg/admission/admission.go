@@ -71,6 +71,11 @@ func NumAcquired(c *Controller) int64 {
 	return atomic.LoadInt64(&c.mu.numAcquired)
 }
 
+func (c *Controller) handleRelease(alloc *quotapool.IntAlloc) {
+	atomic.AddInt64(&c.mu.numAcquired, -1)
+	c.pool.Release(alloc)
+}
+
 // Interceptor returns a UnaryServerInterceptor with parameters
 // taken from a Controller.
 func Interceptor(c *Controller) grpc.UnaryServerInterceptor {
@@ -89,7 +94,7 @@ func Interceptor(c *Controller) grpc.UnaryServerInterceptor {
 			alloc, _ := c.pool.Acquire(ctx, 1)
 			atomic.AddInt64(&c.mu.numAcquired, 1)
 			atomic.AddInt64(&c.mu.numWaiting, -1)
-			defer c.pool.Release(alloc)
+			defer c.handleRelease(alloc)
 
 			// Take request timestamp, add it to context's metadata, and return
 			// this new context.
