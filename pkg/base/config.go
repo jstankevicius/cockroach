@@ -231,10 +231,6 @@ type Config struct {
 	// The flag exists mostly for the benefit of tests, and for
 	// `cockroach start-single-node`.
 	AutoInitializeCluster bool
-
-	// AdmissionConcurrency defines the maximum number of gRPC the server can
-	// service at once.
-	AdmissionConcurrency int
 }
 
 // HistogramWindowInterval is used to determine the approximate length of time

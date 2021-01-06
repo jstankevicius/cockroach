@@ -34,7 +34,7 @@ func DefaultConfig() Config {
 
 // Controller determines the current admission parameters.
 type Controller struct {
-	pool *quotapool.IntPool
+	Pool *quotapool.IntPool
 
 	mu struct {
 		syncutil.RWMutex
@@ -50,11 +50,11 @@ func NewController(conf Config) *Controller {
 	c := Controller{
 
 		// Should this have a better name?
-		pool: quotapool.NewIntPool("controller intpool", conf.Limit),
+		Pool: quotapool.NewIntPool("controller intpool", conf.Limit),
 	}
 
 	// Run some goroutine w/ stopper to log stats somewhere.
-	fmt.Printf("intpool cap: %d\n", c.pool.Capacity())
+	fmt.Printf("intpool cap: %d\n", c.Pool.Capacity())
 	return &c
 }
 
@@ -73,7 +73,7 @@ func (c *Controller) NumAcquired() int64 {
 
 func (c *Controller) handleRelease(alloc *quotapool.IntAlloc) {
 	atomic.AddInt64(&c.mu.numAcquired, -1)
-	c.pool.Release(alloc)
+	c.Pool.Release(alloc)
 }
 
 // Interceptor returns a UnaryServerInterceptor with parameters
@@ -91,7 +91,7 @@ func Interceptor(c *Controller) grpc.UnaryServerInterceptor {
 
 			// Attempt to acquire a single unit from the IntPool.
 			// We're not going to handle the error for now.
-			alloc, _ := c.pool.Acquire(ctx, 1)
+			alloc, _ := c.Pool.Acquire(ctx, 1)
 			atomic.AddInt64(&c.mu.numAcquired, 1)
 			atomic.AddInt64(&c.mu.numWaiting, -1)
 			defer c.handleRelease(alloc)

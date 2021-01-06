@@ -30,7 +30,6 @@ import (
 	"time"
 
 	"github.com/cockroachdb/cmux"
-	"github.com/cockroachdb/cockroach/pkg/admission"
 	"github.com/cockroachdb/cockroach/pkg/base"
 	"github.com/cockroachdb/cockroach/pkg/blobs"
 	"github.com/cockroachdb/cockroach/pkg/clusterversion"
@@ -339,15 +338,7 @@ func NewServer(cfg Config, stopper *stop.Stopper) (*Server, error) {
 	// and after ValidateAddrs().
 	rpcContext.CheckCertificateAddrs(ctx)
 
-	// Write a new function that calls newGRPCServer but also takes some sort
-	// of admission config. We need to somehow grab the admissionConcurrency
-	// flag from the server settings and construct the config here, then call
-	// newGRPCServerWithConfig().
-	admissionConfig := admission.Config{
-		Limit: uint64(cfg.AdmissionConcurrency),
-	}
-
-	grpcServer := newGRPCServerWithConfig(rpcContext, admissionConfig)
+	grpcServer := newGRPCServerWithConfig(rpcContext, &cfg)
 	g := gossip.New(
 		cfg.AmbientCtx,
 		&rpcContext.ClusterID,
