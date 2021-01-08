@@ -2,15 +2,11 @@ package admission
 
 import (
 	"context"
-	"fmt"
-	"strconv"
 	"sync/atomic"
-	"time"
 
+	"github.com/cockroachdb/cockroach/pkg/roachpb"
 	"github.com/cockroachdb/cockroach/pkg/util/quotapool"
-	"github.com/cockroachdb/cockroach/pkg/util/syncutil"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/metadata"
 )
 
 // Config configures a Controller.
@@ -36,9 +32,9 @@ func DefaultConfig() Config {
 type Controller struct {
 	Pool *quotapool.IntPool
 
-	mu struct {
-		syncutil.RWMutex
+	stats struct {
 
+		// These should only be accessed using atomics.
 		numAcquired int64
 		numWaiting  int64
 	}
@@ -46,34 +42,31 @@ type Controller struct {
 
 // NewController constructs a new Controller struct from a given Config.
 func NewController(conf Config) *Controller {
-	fmt.Println("initializing new controller")
 	c := &Controller{
 
 		// Should this have a better name?
 		Pool: quotapool.NewIntPool("controller intpool", conf.Limit),
 	}
 
-	// Run some goroutine w/ stopper to log stats somewhere.
-	fmt.Printf("intpool cap: %d\n", c.Pool.Capacity())
 	return c
 }
 
 // NumWaiting returns the current number of requests that have been intercepted
 // by admission.Interceptor but have not been acquired.
 func (c *Controller) NumWaiting() int64 {
-	return atomic.LoadInt64(&c.mu.numWaiting)
+	return atomic.LoadInt64(&c.stats.numWaiting)
 }
 
 // NumAcquired returns the number of requests we have acquired quota for.
 // This is functionally identical to computing
 // c.pool.Capacity() - c.pool.ApproximateQuota().
 func (c *Controller) NumAcquired() int64 {
-	return atomic.LoadInt64(&c.mu.numAcquired)
+	return atomic.LoadInt64(&c.stats.numAcquired)
 }
 
 func (c *Controller) handleRelease(alloc *quotapool.IntAlloc) {
-	atomic.AddInt64(&c.mu.numAcquired, -1)
-	c.Pool.Release(alloc)
+	atomic.AddInt64(&c.stats.numAcquired, -1)
+	alloc.Release()
 }
 
 // Interceptor returns a UnaryServerInterceptor with parameters
@@ -85,21 +78,32 @@ func Interceptor(c *Controller) grpc.UnaryServerInterceptor {
 		info *grpc.UnaryServerInfo,
 		handler grpc.UnaryHandler) (interface{}, error) {
 
-		atomic.AddInt64(&c.mu.numWaiting, 1)
+		if ba, ok := req.(*roachpb.BatchRequest); ok {
 
-		if info.FullMethod == "/cockroach.roachpb.Internal/Batch" {
+			atomic.AddInt64(&c.stats.numWaiting, 1)
+
+			const maxCertainSystemRangeID = 20
+
+			// We do not wait to acquire quota for admin or system range
+			// requests. We still need to decrement numWaiting.
+			if ba.IsAdmin() || ba.Header.RangeID < maxCertainSystemRangeID {
+				atomic.AddInt64(&c.stats.numWaiting, -1)
+				return handler(ctx, req)
+			}
 
 			// Attempt to acquire a single unit from the IntPool.
-			// We're not going to handle the error for now.
-			alloc, _ := c.Pool.Acquire(ctx, 1)
-			atomic.AddInt64(&c.mu.numAcquired, 1)
-			atomic.AddInt64(&c.mu.numWaiting, -1)
+			alloc, err := c.Pool.Acquire(ctx, 1)
+
+			if err != nil {
+				atomic.AddInt64(&c.stats.numWaiting, -1)
+				return nil, err
+			}
+
+			// Defer only when we know for sure that we've acquired quota
 			defer c.handleRelease(alloc)
 
-			// Take request timestamp, add it to context's metadata, and return
-			// this new context.
-			start := time.Now().UnixNano()
-			ctx = metadata.AppendToOutgoingContext(ctx, "start-time", strconv.Itoa(int(start)))
+			atomic.AddInt64(&c.stats.numWaiting, -1)
+			atomic.AddInt64(&c.stats.numAcquired, 1)
 
 			return handler(ctx, req)
 		}
