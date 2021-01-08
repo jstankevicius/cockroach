@@ -47,7 +47,7 @@ type Controller struct {
 // NewController constructs a new Controller struct from a given Config.
 func NewController(conf Config) *Controller {
 	fmt.Println("initializing new controller")
-	c := Controller{
+	c := &Controller{
 
 		// Should this have a better name?
 		Pool: quotapool.NewIntPool("controller intpool", conf.Limit),
@@ -55,7 +55,7 @@ func NewController(conf Config) *Controller {
 
 	// Run some goroutine w/ stopper to log stats somewhere.
 	fmt.Printf("intpool cap: %d\n", c.Pool.Capacity())
-	return &c
+	return c
 }
 
 // NumWaiting returns the current number of requests that have been intercepted
