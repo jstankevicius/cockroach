@@ -13,6 +13,7 @@ package rpc
 import (
 	"context"
 	"sync/atomic"
+	"time"
 
 	"github.com/cockroachdb/cockroach/pkg/util/log"
 	"golang.org/x/sync/syncmap"
@@ -113,10 +114,30 @@ func (sh *StatsHandler) newClient(target string) stats.Handler {
 	}
 }
 
+type rpcTimestampKey struct{}
+
+// ContextWithBatchRPCStartTimestamp returns a copy of ctx with an added
+// timestamp key.
+func ContextWithBatchRPCStartTimestamp(ctx context.Context, ts time.Time) context.Context {
+	return context.WithValue(ctx, rpcTimestampKey{}, ts.UnixNano())
+}
+
+// BatchRPCStartTimestampFromContext reads off a timestamp from a context.
+func BatchRPCStartTimestampFromContext(ctx context.Context) (_ time.Time, ok bool) {
+	v, ok := ctx.Value(rpcTimestampKey{}).(int64)
+	if !ok {
+		return time.Time{}, false
+	}
+	return time.Unix(0, v), true
+}
+
 // TagRPC implements the grpc.stats.Handler interface. This
 // interface is used directly for server-side stats recording.
 func (sh *StatsHandler) TagRPC(ctx context.Context, rti *stats.RPCTagInfo) context.Context {
-	return ctx
+	if rti.FullMethodName != "/cockroach.roachpb.Internal/Batch" {
+		return ctx
+	}
+	return ContextWithBatchRPCStartTimestamp(ctx, time.Now())
 }
 
 // HandleRPC implements the grpc.stats.Handler interface. This
