@@ -30,8 +30,7 @@ func DefaultConfig() Config {
 
 // Controller determines the current admission parameters.
 type Controller struct {
-	Pool *quotapool.IntPool
-
+	Pool  *quotapool.IntPool
 	stats struct {
 
 		// These should only be accessed using atomics.
@@ -64,9 +63,34 @@ func (c *Controller) NumAcquired() int64 {
 	return atomic.LoadInt64(&c.stats.numAcquired)
 }
 
-func (c *Controller) handleRelease(alloc *quotapool.IntAlloc) {
-	atomic.AddInt64(&c.stats.numAcquired, -1)
+func (c *Controller) acquire(ctx context.Context, ba *roachpb.BatchRequest) (*quotapool.IntAlloc, error) {
+
+	// Batch requests going to system ranges and admin requests should not be
+	// handled by the interceptor at all.
+	const maxCertainSystemRangeID = 20
+	if ba.IsAdmin() || ba.Header.RangeID < maxCertainSystemRangeID {
+		return nil, nil
+	}
+
+	// TODO: switch to metric.Gauge
+	atomic.AddInt64(&c.stats.numWaiting, 1)
+	defer atomic.AddInt64(&c.stats.numWaiting, -1)
+	alloc, err := c.Pool.Acquire(ctx, 1)
+
+	if err != nil {
+		return nil, err
+	}
+
+	atomic.AddInt64(&c.stats.numAcquired, 1)
+	return alloc, nil
+}
+
+func (c *Controller) release(alloc *quotapool.IntAlloc) {
+	if alloc == nil {
+		return
+	}
 	alloc.Release()
+	atomic.AddInt64(&c.stats.numAcquired, -1)
 }
 
 // Interceptor returns a UnaryServerInterceptor with parameters
@@ -80,35 +104,13 @@ func Interceptor(c *Controller) grpc.UnaryServerInterceptor {
 
 		if ba, ok := req.(*roachpb.BatchRequest); ok {
 
-			atomic.AddInt64(&c.stats.numWaiting, 1)
-
-			const maxCertainSystemRangeID = 20
-
-			// We do not wait to acquire quota for admin or system range
-			// requests. We still need to decrement numWaiting.
-			if ba.IsAdmin() || ba.Header.RangeID < maxCertainSystemRangeID {
-				atomic.AddInt64(&c.stats.numWaiting, -1)
-				return handler(ctx, req)
-			}
-
-			// Attempt to acquire a single unit from the IntPool.
-			alloc, err := c.Pool.Acquire(ctx, 1)
-
+			alloc, err := c.acquire(ctx, ba)
 			if err != nil {
-				atomic.AddInt64(&c.stats.numWaiting, -1)
 				return nil, err
 			}
-
-			// Defer only when we know for sure that we've acquired quota
-			defer c.handleRelease(alloc)
-
-			atomic.AddInt64(&c.stats.numWaiting, -1)
-			atomic.AddInt64(&c.stats.numAcquired, 1)
-
-			return handler(ctx, req)
+			defer c.release(alloc)
 		}
 
-		// Otherwise just handle normally
 		return handler(ctx, req)
 	}
 
