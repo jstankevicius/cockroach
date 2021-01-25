@@ -114,6 +114,7 @@ type Registry struct {
 	cumulative    map[string]*hdrhistogram.Histogram
 	prevTick      map[string]time.Time
 	histogramPool *sync.Pool
+	Ramp          bool
 }
 
 // NewRegistry returns an initialized Registry. maxLat is the maximum time that
@@ -124,6 +125,7 @@ func NewRegistry(maxLat time.Duration) *Registry {
 		start:      timeutil.Now(),
 		cumulative: make(map[string]*hdrhistogram.Histogram),
 		prevTick:   make(map[string]time.Time),
+		Ramp:       false, // should be modified by a single external thread
 		histogramPool: &sync.Pool{
 			New: func() interface{} {
 				return hdrhistogram.New(minLatency.Nanoseconds(), maxLat.Nanoseconds(), sigFigs)
@@ -203,15 +205,18 @@ func (w *Registry) Tick(fn func(Tick)) {
 		w.histogramPool.Put(mergedHist)
 	}
 
-	f, err := os.OpenFile("requests.txt", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		fmt.Println("Could not open request file")
-	}
+	// If we're off the ramp period, we can begin writing timestamps to file
+	if !w.Ramp {
+		f, err := os.OpenFile("requests.txt", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		if err != nil {
+			fmt.Println("Could not open request file")
+		}
 
-	for _, req := range aggregateRequests {
-		startNano := strconv.FormatInt(req.start.UnixNano(), 10)
-		endNano := strconv.FormatInt(req.end.UnixNano(), 10)
-		fmt.Fprintf(f, "%s\t%s\n", startNano, endNano)
+		for _, req := range aggregateRequests {
+			startNano := strconv.FormatInt(req.start.UnixNano(), 10)
+			endNano := strconv.FormatInt(req.end.UnixNano(), 10)
+			fmt.Fprintf(f, "%s\t%s\n", startNano, endNano)
+		}
 	}
 }
 
