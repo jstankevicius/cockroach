@@ -406,6 +406,7 @@ func runRun(gen workload.Generator, urls []string, dbName string) error {
 		// If a ramp period was specified, start all of the workers gradually
 		// with a new context.
 		var rampCtx context.Context
+		reg.Ramp = true
 		if rampDone != nil {
 			var cancel func()
 			rampCtx, cancel = context.WithTimeout(workersCtx, *ramp)
@@ -494,6 +495,7 @@ func runRun(gen workload.Generator, urls []string, dbName string) error {
 				t.Cumulative.Reset()
 				t.Hist.Reset()
 			})
+			reg.Ramp = false
 
 		case <-done:
 			cancelWorkers()

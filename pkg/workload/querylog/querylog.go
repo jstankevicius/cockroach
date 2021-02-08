@@ -277,6 +277,7 @@ func (w *worker) run(ctx context.Context) error {
 	}
 
 	var start time.Time
+	var end time.Time
 	for {
 		chosenQuery, tableName := w.chooseQuery()
 		pholdersColumnNames, numRepeats, err := w.deduceColumnNamesForPlaceholders(ctx, chosenQuery)
@@ -311,9 +312,10 @@ func (w *worker) run(ctx context.Context) error {
 		for rows.Next() {
 		}
 		rows.Close()
-		elapsed := timeutil.Since(start)
+		//elapsed := timeutil.Since(start)
+		end = timeutil.Now()
 		// TODO(yuzefovich): is there a better way to display the results?
-		w.hists.Get("").Record(elapsed)
+		w.hists.Get("").RecordInterval(start, end)
 	}
 }
 

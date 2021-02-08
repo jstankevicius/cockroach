@@ -338,8 +338,7 @@ func NewServer(cfg Config, stopper *stop.Stopper) (*Server, error) {
 	// and after ValidateAddrs().
 	rpcContext.CheckCertificateAddrs(ctx)
 
-	grpcServer := newGRPCServer(rpcContext)
-
+	grpcServer := newGRPCServerWithConfig(rpcContext, &cfg)
 	g := gossip.New(
 		cfg.AmbientCtx,
 		&rpcContext.ClusterID,

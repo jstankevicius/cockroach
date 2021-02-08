@@ -11,20 +11,33 @@
 package server
 
 import (
+	"fmt"
 	"strings"
 	"sync/atomic"
 
+	"github.com/cockroachdb/cockroach/pkg/admission"
 	"github.com/cockroachdb/cockroach/pkg/rpc"
+	"github.com/cockroachdb/cockroach/pkg/settings"
 	"github.com/cockroachdb/errors"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	grpcstatus "google.golang.org/grpc/status"
 )
 
+var (
+	admissionConcurrency = settings.RegisterIntSetting(
+		"grpc_server.admission_concurrency",
+		"grpc_server.admission_concurrency is the maximum allowable number of requests that can be"+
+			"simultaneously admitted by a GRPC server.",
+		1000,
+	)
+)
+
 // grpcServer is a wrapper on top of a grpc.Server that includes an interceptor
 // and a mode of operation that can instruct the interceptor to refuse certain
 // RPCs.
 type grpcServer struct {
+	admissionController *admission.Controller
 	*grpc.Server
 	mode serveMode
 }
@@ -32,6 +45,30 @@ type grpcServer struct {
 func newGRPCServer(rpcCtx *rpc.Context) *grpcServer {
 	s := &grpcServer{}
 	s.mode.set(modeInitializing)
+
+	s.Server = rpc.NewServer(rpcCtx, rpc.WithInterceptor(func(path string) error {
+		return s.intercept(path)
+	}))
+	return s
+}
+
+func newGRPCServerWithConfig(rpcCtx *rpc.Context, cfg *Config) *grpcServer {
+	s := &grpcServer{}
+	s.mode.set(modeInitializing)
+
+	// Admission control:
+	s.admissionController = admission.NewController(admission.DefaultConfig())
+	s.admissionController.Pool.UpdateCapacity(
+		uint64(admissionConcurrency.Get(&cfg.Settings.SV)),
+	)
+	admissionConcurrency.SetOnChange(&cfg.Settings.SV, func() {
+		fmt.Printf("IntPool cap updated to %d\n", admissionConcurrency.Get(&cfg.Settings.SV))
+		s.admissionController.Pool.UpdateCapacity(
+			uint64(admissionConcurrency.Get(&cfg.Settings.SV)),
+		)
+	})
+	rpcCtx.SetAdmissionInterceptor(admission.Interceptor(s.admissionController))
+
 	s.Server = rpc.NewServer(rpcCtx, rpc.WithInterceptor(func(path string) error {
 		return s.intercept(path)
 	}))
