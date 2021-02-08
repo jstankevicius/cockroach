@@ -98,6 +98,9 @@ func NewController(conf Config) *Controller {
 		beta:        0.02,
 	}
 
+	c.mu.credits = make(map[roachpb.NodeID]int)
+	fmt.Printf("creating new controller \n")
+
 	go func() {
 		for {
 			// sleep for 1 network RTT (1 second for debug)
@@ -105,23 +108,25 @@ func NewController(conf Config) *Controller {
 			c.mu.Lock()
 
 			nClients := len(c.mu.credits)
+			if nClients > 0 {
 
-			// it's time for a typecasting nightmare
-			dm := float64(c.mu.delayMeasured.Nanoseconds())
-			dt := float64(c.delayTarget.Nanoseconds())
+				// it's time for a typecasting nightmare
+				dm := float64(c.mu.delayMeasured.Nanoseconds())
+				dt := float64(c.delayTarget.Nanoseconds())
 
-			if dm < dt {
-				newCredits := math.Max(float64(nClients)*c.alpha, 1)
-				c.mu.creditsTotal = c.mu.creditsTotal + int(newCredits)
-			} else {
-				overloadLevel := 1 - c.beta*(dm-dt)/dt
-				c.mu.creditsTotal = int(float64(c.mu.creditsTotal) * math.Max(overloadLevel, 0.5))
+				if dm < dt {
+					newCredits := math.Max(float64(nClients)*c.alpha, 1)
+					c.mu.creditsTotal = c.mu.creditsTotal + int(newCredits)
+				} else {
+					overloadLevel := 1 - c.beta*(dm-dt)/dt
+					c.mu.creditsTotal = int(float64(c.mu.creditsTotal) * math.Max(overloadLevel, 0.5))
+				}
+
+				c.mu.creditsOvercommitted = max((c.mu.creditsTotal-c.mu.creditsIssued)/nClients, 1)
+
 			}
 
-			c.mu.creditsOvercommitted = max((c.mu.creditsTotal-c.mu.creditsIssued)/nClients, 1)
 			c.mu.Unlock()
-
-			fmt.Printf("c_total: %d, c_oc: %d, c_issued: %d\n", c.mu.creditsTotal, c.mu.creditsOvercommitted, c.mu.creditsIssued)
 		}
 	}()
 
@@ -163,16 +168,18 @@ func (c *Controller) acquire(ctx context.Context, ba *roachpb.BatchRequest) (*qu
 	// TODO: stuff this into a function
 	// Now that we have acquired quota, we can determine how many credits
 	// to issue back to the client. To simplify, we'll assume that demand = 1.
-	c.mu.Lock()
-	id := ba.GatewayNodeID
-	demand := 1 // maybe len(ba.Requests)?
-	creditsAvailable := c.mu.creditsTotal - c.mu.creditsIssued
-	oldClientTotal, exists := c.mu.credits[id]
 
 	ts, ok := rpc.BatchRPCStartTimestampFromContext(ctx)
 	if !ok {
 		return nil, nil
 	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	id := ba.GatewayNodeID
+	demand := 1 // maybe len(ba.Requests)?
+	creditsAvailable := c.mu.creditsTotal - c.mu.creditsIssued
+	oldClientTotal, exists := c.mu.credits[id]
 	c.mu.delayMeasured = time.Now().Sub(ts)
 
 	// If we don't have an entry for this node, we add one
@@ -190,7 +197,6 @@ func (c *Controller) acquire(ctx context.Context, ba *roachpb.BatchRequest) (*qu
 	c.mu.creditsIssued += newlyIssued
 
 	// TODO: piggyback newlyIssued onto a response.
-	c.mu.Unlock()
 
 	return alloc, nil
 }
