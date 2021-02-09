@@ -2,7 +2,6 @@ package admission
 
 import (
 	"context"
-	"fmt"
 	"math"
 	"sync/atomic"
 	"time"
@@ -99,12 +98,11 @@ func NewController(conf Config) *Controller {
 	}
 
 	c.mu.credits = make(map[roachpb.NodeID]int)
-	fmt.Printf("creating new controller \n")
 
 	go func() {
 		for {
-			// sleep for 1 network RTT (1 second for debug)
-			time.Sleep(1 * time.Second)
+			// 1 network RTT is ~100us
+			time.Sleep(100 * time.Microsecond)
 			c.mu.Lock()
 
 			nClients := len(c.mu.credits)
@@ -180,11 +178,12 @@ func (c *Controller) acquire(ctx context.Context, ba *roachpb.BatchRequest) (*qu
 	demand := 1 // maybe len(ba.Requests)?
 	creditsAvailable := c.mu.creditsTotal - c.mu.creditsIssued
 	oldClientTotal, exists := c.mu.credits[id]
-	c.mu.delayMeasured = time.Now().Sub(ts)
+	c.mu.delayMeasured = time.Since(ts)
 
 	// If we don't have an entry for this node, we add one
 	if !exists {
 		c.mu.credits[id] = 0
+		oldClientTotal = 0
 	}
 
 	// Compute a new credit total for the client:
@@ -195,8 +194,6 @@ func (c *Controller) acquire(ctx context.Context, ba *roachpb.BatchRequest) (*qu
 	}
 	newlyIssued := c.mu.credits[id] - oldClientTotal
 	c.mu.creditsIssued += newlyIssued
-
-	// TODO: piggyback newlyIssued onto a response.
 
 	return alloc, nil
 }
