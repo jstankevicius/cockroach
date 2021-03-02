@@ -235,11 +235,6 @@ func workerRun(
 		}
 
 		if err := workFn(ctx); err != nil {
-			/*
-			if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
-				return
-			}
-			*/
 			errCh <- err
 			continue
 		}
@@ -400,7 +395,7 @@ func runRun(gen workload.Generator, urls []string, dbName string) error {
 		rampDone = make(chan struct{})
 		reg.Ramp = true
 	} else {
-		reg.Ramp = false;
+		reg.Ramp = false
 	}
 
 	workersCtx, cancelWorkers := context.WithCancel(ctx)
