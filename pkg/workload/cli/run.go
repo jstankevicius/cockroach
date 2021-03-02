@@ -396,6 +396,9 @@ func runRun(gen workload.Generator, urls []string, dbName string) error {
 		// Create a channel to signal when the ramp period finishes. Will
 		// be reset to nil when consumed by the process loop below.
 		rampDone = make(chan struct{})
+		reg.Ramp = true
+	} else {
+		reg.Ramp = false;
 	}
 
 	workersCtx, cancelWorkers := context.WithCancel(ctx)
@@ -406,7 +409,6 @@ func runRun(gen workload.Generator, urls []string, dbName string) error {
 		// If a ramp period was specified, start all of the workers gradually
 		// with a new context.
 		var rampCtx context.Context
-		reg.Ramp = true
 		if rampDone != nil {
 			var cancel func()
 			rampCtx, cancel = context.WithTimeout(workersCtx, *ramp)
