@@ -224,6 +224,7 @@ func workerRun(
 
 	for {
 		if ctx.Err() != nil {
+			errCh <- ctx.Err()
 			return
 		}
 
