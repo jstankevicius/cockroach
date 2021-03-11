@@ -69,6 +69,22 @@ var histogramsMaxLatency = runFlags.Duration(
 	"histograms-max-latency", 100*time.Second,
 	"Expected maximum latency of running a query")
 
+/*
+on start:
+startCh <- (workerId, time.Now())
+startCh -> t -> write to disk
+
+endCh <- (workerId, time.Now())
+endCh -> t -> write to disk
+
+*/
+
+// Timestamp is a struct to store (request) timestamps by some unique ID.
+type Timestamp struct {
+	id uint64 // can be id of request or the worker.
+	t  time.Time
+}
+
 func init() {
 	AddSubCmd(func(userFacing bool) *cobra.Command {
 		var initCmd = SetCmdDefaults(&cobra.Command{
@@ -205,6 +221,9 @@ func SetCmdDefaults(cmd *cobra.Command) *cobra.Command {
 	return cmd
 }
 
+// totalOps keeps a global count of all attempted operations.
+var totalOps uint64
+
 // numOps keeps a global count of successful operations.
 var numOps uint64
 
@@ -214,6 +233,8 @@ var numOps uint64
 func workerRun(
 	ctx context.Context,
 	errCh chan<- error,
+	startCh chan<- Timestamp,
+	endCh chan<- Timestamp,
 	wg *sync.WaitGroup,
 	limiter *rate.Limiter,
 	workFn func(context.Context) error,
@@ -234,11 +255,20 @@ func workerRun(
 				return
 			}
 		}
+		id := atomic.AddUint64(&totalOps, 1)
+
+		// Notify startCh of request start.
+		startCh <- Timestamp{id, time.Now()}
 
 		if err := workFn(ctx); err != nil {
+			// we want some way to ignore timeout errors. Throwing them all into
+			// errCh results in stdout being unreadable.
 			errCh <- err
 			continue
 		}
+
+		// If we didn't error out, notify endCh of request end.
+		endCh <- Timestamp{id, time.Now()}
 
 		v := atomic.AddUint64(&numOps, 1)
 		if *maxOps > 0 && v >= *maxOps {
@@ -400,6 +430,15 @@ func runRun(gen workload.Generator, urls []string, dbName string) error {
 	}
 
 	workersCtx, cancelWorkers := context.WithCancel(ctx)
+
+	// Channel for request start and request end timestamps
+	startCh := make(chan Timestamp)
+	endCh := make(chan Timestamp)
+
+	// Open files for start/end timestamp writing
+	startf, err := os.OpenFile("start.txt", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	endf, err := os.OpenFile("end.txt", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+
 	defer cancelWorkers()
 	var wg sync.WaitGroup
 	wg.Add(len(ops.WorkerFns))
@@ -420,11 +459,11 @@ func runRun(gen workload.Generator, urls []string, dbName string) error {
 				if rampCtx != nil {
 					rampPerWorker := *ramp / time.Duration(len(ops.WorkerFns))
 					time.Sleep(time.Duration(i) * rampPerWorker)
-					workerRun(rampCtx, errCh, nil /* wg */, limiter, workFn)
+					workerRun(rampCtx, errCh, startCh, endCh, nil /* wg */, limiter, workFn)
 				}
 
 				// Start worker again, this time with the main context.
-				workerRun(workersCtx, errCh, &wg, limiter, workFn)
+				workerRun(workersCtx, errCh, startCh, endCh, &wg, limiter, workFn)
 			}(i, workFn)
 		}
 
@@ -466,6 +505,12 @@ func runRun(gen workload.Generator, urls []string, dbName string) error {
 	everySecond := log.Every(*displayEvery)
 	for {
 		select {
+		case ts := <-startCh:
+			fmt.Fprintf(startf, "%d\t%d\n", ts.id, ts.t.UnixNano())
+
+		case ts := <-endCh:
+			fmt.Fprintf(endf, "%d\t%d\n", ts.id, ts.t.UnixNano())
+
 		case err := <-errCh:
 			formatter.outputError(err)
 			if *tolerateErrors {

@@ -44,6 +44,10 @@ type NamedHistogram struct {
 		syncutil.Mutex
 		current *hdrhistogram.Histogram
 		ts      []RequestTimestamp
+
+		// The key can be either a worker ID or a request ID.
+		tsStarts map[int]time.Time
+		tsEnds   map[int]time.Time
 	}
 }
 
@@ -51,6 +55,8 @@ func newNamedHistogram(reg *Registry, name string) *NamedHistogram {
 	w := &NamedHistogram{name: name}
 	w.mu.current = reg.newHistogram()
 	w.mu.ts = make([]RequestTimestamp, 0)
+	w.mu.tsStarts = make(map[int]time.Time)
+	w.mu.tsEnds = make(map[int]time.Time)
 	return w
 }
 
