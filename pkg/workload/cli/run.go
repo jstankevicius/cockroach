@@ -69,16 +69,6 @@ var histogramsMaxLatency = runFlags.Duration(
 	"histograms-max-latency", 100*time.Second,
 	"Expected maximum latency of running a query")
 
-/*
-on start:
-startCh <- (workerId, time.Now())
-startCh -> t -> write to disk
-
-endCh <- (workerId, time.Now())
-endCh -> t -> write to disk
-
-*/
-
 // Timestamp is a struct to store (request) timestamps by some unique ID.
 type Timestamp struct {
 	id uint64 // can be id of request or the worker.
@@ -252,6 +242,7 @@ func workerRun(
 		// Limit how quickly the load generator sends requests based on --max-rate.
 		if limiter != nil {
 			if err := limiter.Wait(ctx); err != nil {
+				errCh <- err
 				return
 			}
 		}
@@ -424,11 +415,7 @@ func runRun(gen workload.Generator, urls []string, dbName string) error {
 		// Create a channel to signal when the ramp period finishes. Will
 		// be reset to nil when consumed by the process loop below.
 		rampDone = make(chan struct{})
-		reg.Ramp = true
-	} else {
-		reg.Ramp = false
 	}
-
 	workersCtx, cancelWorkers := context.WithCancel(ctx)
 
 	// Channel for request start and request end timestamps
@@ -436,8 +423,8 @@ func runRun(gen workload.Generator, urls []string, dbName string) error {
 	endCh := make(chan Timestamp)
 
 	// Open files for start/end timestamp writing
-	startf, err := os.OpenFile("start.txt", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	endf, err := os.OpenFile("end.txt", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	startf, err := os.OpenFile("start.txt", os.O_CREATE|os.O_WRONLY, 0644)
+	endf, err := os.OpenFile("end.txt", os.O_CREATE|os.O_WRONLY, 0644)
 
 	defer cancelWorkers()
 	var wg sync.WaitGroup
@@ -464,6 +451,7 @@ func runRun(gen workload.Generator, urls []string, dbName string) error {
 
 				// Start worker again, this time with the main context.
 				workerRun(workersCtx, errCh, startCh, endCh, &wg, limiter, workFn)
+				fmt.Printf("worker %d has returned out of workerRun\n", i)
 			}(i, workFn)
 		}
 
@@ -540,7 +528,6 @@ func runRun(gen workload.Generator, urls []string, dbName string) error {
 				t.Cumulative.Reset()
 				t.Hist.Reset()
 			})
-			reg.Ramp = false
 
 		case <-done:
 			cancelWorkers()
