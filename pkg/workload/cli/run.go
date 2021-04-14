@@ -250,10 +250,10 @@ func workerRun(
 
 		// Notify startCh of request start.
 		startCh <- Timestamp{id, time.Now()}
+		ctx, cancel := context.WithTimeout(ctx, time.Millisecond*100)
+		defer cancel()
 
 		if err := workFn(ctx); err != nil {
-			// we want some way to ignore timeout errors. Throwing them all into
-			// errCh results in stdout being unreadable.
 			errCh <- err
 			continue
 		}
