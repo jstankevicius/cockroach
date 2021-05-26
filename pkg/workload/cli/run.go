@@ -250,8 +250,6 @@ func workerRun(
 
 		// Notify startCh of request start.
 		startCh <- Timestamp{id, time.Now()}
-		ctx, cancel := context.WithTimeout(ctx, time.Millisecond*100)
-		defer cancel()
 
 		if err := workFn(ctx); err != nil {
 			errCh <- err
